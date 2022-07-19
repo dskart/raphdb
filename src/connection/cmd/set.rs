@@ -1,5 +1,7 @@
-use crate::cmd::Parse;
-use crate::{Connection, Frame, KeyValueStore};
+use crate::{
+    connection::{Connection, Frame, Parser},
+    KeyValueStore,
+};
 
 use bytes::Bytes;
 
@@ -14,9 +16,9 @@ impl Set {
         Set { key: key.to_string(), value }
     }
 
-    pub fn parse_frames(parse: &mut Parse) -> crate::Result<Set> {
-        let key = parse.next_string()?;
-        let value = parse.next_bytes()?;
+    pub fn parse_frames(parser: &mut Parser) -> crate::Result<Set> {
+        let key = parser.next_string()?;
+        let value = parser.next_bytes()?;
 
         Ok(Set { key, value })
     }

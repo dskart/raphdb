@@ -1,5 +1,8 @@
-use super::key_value_store::KeyValueStore;
-use crate::{Command, Connection, Shutdown};
+use crate::KeyValueStore;
+use crate::{
+    connection::{Command, Connection},
+    server::Shutdown,
+};
 
 use std::sync::Arc;
 use tokio::sync::{mpsc, Semaphore};

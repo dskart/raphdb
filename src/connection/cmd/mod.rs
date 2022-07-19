@@ -5,7 +5,10 @@ pub use set::Set;
 mod unknown;
 pub use unknown::Unknown;
 
-use crate::{Connection, Frame, KeyValueStore, Parse};
+use crate::{
+    connection::{Connection, Frame, Parser},
+    KeyValueStore,
+};
 
 #[derive(Debug)]
 pub enum Command {
@@ -16,25 +19,25 @@ pub enum Command {
 
 impl Command {
     pub fn from_frame(frame: Frame) -> crate::Result<Command> {
-        let mut parse = Parse::new(frame)?;
+        let mut parser = Parser::new(frame)?;
 
-        let command_name = parse.next_string()?.to_lowercase();
+        let command_name = parser.next_string()?.to_lowercase();
 
         let command = match &command_name[..] {
-            "get" => Command::Get(Get::parse_frames(&mut parse)?),
-            "set" => Command::Set(Set::parse_frames(&mut parse)?),
+            "get" => Command::Get(Get::parse_frames(&mut parser)?),
+            "set" => Command::Set(Set::parse_frames(&mut parser)?),
             _ => {
                 // The command is not recognized and an Unknown command is
                 // returned.
                 //
                 // `return` is called here to skip the `finish()` call below. As
                 // the command is not recognized, there is most likely
-                // unconsumed fields remaining in the `Parse` instance.
+                // unconsumed fields remaining in the `Parser` instance.
                 return Ok(Command::Unknown(Unknown::new(command_name)));
             }
         };
 
-        parse.finish()?;
+        parser.finish()?;
 
         Ok(command)
     }
@@ -47,5 +50,13 @@ impl Command {
             Set(cmd) => cmd.apply(kv, dst).await,
             Unknown(cmd) => cmd.apply(dst).await,
         }
+    }
+}
+
+#[cfg(test)]
+mod test {
+    #[tokio::test]
+    async fn test_from_frame() {
+        assert!(true)
     }
 }

@@ -1,5 +1,7 @@
-use crate::cmd::{Get, Set};
-use crate::{Connection, Frame};
+use crate::connection::{
+    cmd::{Get, Set},
+    Connection, Frame,
+};
 
 use bytes::Bytes;
 use std::io::{Error, ErrorKind};

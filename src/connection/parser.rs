@@ -1,42 +1,36 @@
-use crate::Frame;
+use crate::connection::{Frame, ParserError};
 
 use bytes::Bytes;
-use std::{fmt, str, vec};
+use std::{str, vec};
 
 #[derive(Debug)]
-pub struct Parse {
+pub struct Parser {
     parts: vec::IntoIter<Frame>,
 }
 
-#[derive(Debug)]
-pub enum ParseError {
-    EndOfStream,
-    Other(crate::Error),
-}
-
-impl Parse {
-    /// Create a new `Parse` to parse the contents of `frame`.
+impl Parser {
+    /// Create a new `Parser` to parser the contents of `frame`.
     ///
     /// Returns `Err` if `frame` is not an array frame.
-    pub fn new(frame: Frame) -> Result<Parse, ParseError> {
+    pub fn new(frame: Frame) -> Result<Parser, ParserError> {
         let array = match frame {
             Frame::Array(array) => array,
             frame => return Err(format!("protocol error; expected array, got {:?}", frame).into()),
         };
 
-        Ok(Parse { parts: array.into_iter() })
+        Ok(Parser { parts: array.into_iter() })
     }
 
     /// Return the next entry. Array frames are arrays of frames, so the next
     /// entry is a frame.
-    fn next(&mut self) -> Result<Frame, ParseError> {
-        self.parts.next().ok_or(ParseError::EndOfStream)
+    fn next(&mut self) -> Result<Frame, ParserError> {
+        self.parts.next().ok_or(ParserError::EndOfStream)
     }
 
     /// Return the next entry as a string.
     ///
     /// If the next entry cannot be represented as a String, then an error is returned.
-    pub fn next_string(&mut self) -> Result<String, ParseError> {
+    pub fn next_string(&mut self) -> Result<String, ParserError> {
         match self.next()? {
             // Both `Simple` and `Bulk` representation may be strings. Strings
             // are parsed to UTF-8.
@@ -55,7 +49,7 @@ impl Parse {
     ///
     /// If the next entry cannot be represented as raw bytes, an error is
     /// returned.
-    pub fn next_bytes(&mut self) -> Result<Bytes, ParseError> {
+    pub fn next_bytes(&mut self) -> Result<Bytes, ParserError> {
         match self.next()? {
             // Both `Simple` and `Bulk` representation may be raw bytes.
             //
@@ -75,7 +69,7 @@ impl Parse {
     /// If the next entry cannot be represented as an integer, then an error is
     /// returned.
     #[allow(dead_code)]
-    pub fn next_int(&mut self) -> Result<u64, ParseError> {
+    pub fn next_int(&mut self) -> Result<u64, ParserError> {
         use atoi::atoi;
 
         const MSG: &str = "protocol error; invalid number";
@@ -92,7 +86,7 @@ impl Parse {
     }
 
     /// Ensure there are no more entries in the array
-    pub fn finish(&mut self) -> Result<(), ParseError> {
+    pub fn finish(&mut self) -> Result<(), ParserError> {
         if self.parts.next().is_none() {
             Ok(())
         } else {
@@ -101,36 +95,46 @@ impl Parse {
     }
 }
 
-impl From<String> for ParseError {
-    fn from(src: String) -> ParseError {
-        ParseError::Other(src.into())
-    }
-}
-
-impl From<&str> for ParseError {
-    fn from(src: &str) -> ParseError {
-        src.to_string().into()
-    }
-}
-
-impl fmt::Display for ParseError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            ParseError::EndOfStream => "protocol error; unexpected end of stream".fmt(f),
-            ParseError::Other(err) => err.fmt(f),
-        }
-    }
-}
-
-impl std::error::Error for ParseError {}
-
 #[cfg(test)]
 mod test {
-    // use super::*;
+    use super::*;
+
+    fn create_array_frame() -> Frame {
+        let mut frame = Frame::array();
+        frame.push_bulk(Bytes::from("Hello world"));
+        frame.push_int(1);
+        return frame;
+    }
 
     #[tokio::test]
-    async fn test_parse() {
-        // let mut parse = Parse::new(frame)?;
-        assert!(true);
+    async fn test_new() {
+        let frame = Frame::Simple("foo".to_string());
+        let parser = Parser::new(frame);
+        assert!(parser.is_err());
+
+        let frame = create_array_frame();
+        let parser = Parser::new(frame);
+        assert!(parser.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_next() {
+        let mut frame_array = Frame::array();
+        frame_array.push_bulk(Bytes::from("Hello world"));
+        frame_array.push_int(1);
+
+        let mut parser = Parser::new(frame_array.clone()).unwrap();
+
+        if let Frame::Array(frames) = frame_array {
+            for frame in frames.into_iter() {
+                let next_frame = parser.next();
+                assert!(next_frame.is_ok());
+                assert_eq!(next_frame.unwrap(), frame);
+            }
+            assert!(parser.finish().is_ok());
+            assert!(parser.next().is_err());
+        } else {
+            unreachable!()
+        }
     }
 }

@@ -1,9 +1,9 @@
+use crate::connection::FrameError;
+
 use bytes::{Buf, BufMut, Bytes, BytesMut};
 use std::convert::TryInto;
 use std::fmt;
 use std::io::Cursor;
-use std::num::TryFromIntError;
-use std::string::FromUtf8Error;
 
 #[derive(Clone, Debug)]
 pub enum Frame {
@@ -13,12 +13,6 @@ pub enum Frame {
     Bulk(Bytes),
     Null,
     Array(Vec<Frame>),
-}
-
-#[derive(Debug)]
-pub enum Error {
-    Incomplete,
-    Other(crate::Error),
 }
 
 impl Frame {
@@ -45,7 +39,7 @@ impl Frame {
     ///
     /// # Panics
     ///
-    /// panics if `self` is not an array
+    /// panics if `self` is not an Frame::Array
     #[allow(dead_code)]
     pub fn push_int(&mut self, value: u64) {
         match self {
@@ -56,6 +50,11 @@ impl Frame {
         }
     }
 
+    /// Creates bytes from the corresponding Frame
+    ///
+    /// # Panics
+    ///
+    /// Panics if self is a Frame::Array as async does not allow recursion
     pub fn create_bytes(&self) -> std::io::Result<BytesMut> {
         let mut buffer = BytesMut::new();
         match self {
@@ -94,8 +93,10 @@ impl Frame {
         return Ok(buffer);
     }
 
-    /// Checks if an entire message can be decoded from `src`
-    pub fn check(src: &mut Cursor<&[u8]>) -> Result<(), Error> {
+    /// Checks if an entire frame can be decoded from `src`.
+    /// Will return an Incomplete Error if the src does not have enough bytes to
+    /// parse a whole frame.
+    pub fn check(src: &mut Cursor<&[u8]>) -> Result<(), FrameError> {
         match get_u8(src)? {
             b'+' => {
                 get_line(src)?;
@@ -111,48 +112,34 @@ impl Frame {
             }
             b'$' => {
                 if b'-' == peek_u8(src)? {
-                    // Skip '-1\r\n'
-                    skip(src, 4)
+                    skip(src, 4) // Skip '-1\r\n'
                 } else {
-                    // Read the bulk string
                     let len: usize = get_decimal(src)?.try_into()?;
-
-                    // skip that number of bytes + 2 (\r\n).
-                    skip(src, len + 2)
+                    skip(src, len + 2) // skip that number of bytes + 2 (\r\n).
                 }
             }
             b'*' => {
                 let len = get_decimal(src)?;
-
                 for _ in 0..len {
                     Frame::check(src)?;
                 }
-
                 Ok(())
             }
             actual => Err(format!("protocol error; invalid frame type byte `{}`", actual).into()),
         }
     }
 
-    /// The message has already been validated with `check`.
-    pub fn parse(src: &mut Cursor<&[u8]>) -> Result<Frame, Error> {
+    /// Parser `src` into a Frame. This method should be called after `Frame::check(src)`.
+    pub fn parse(src: &mut Cursor<&[u8]>) -> Result<Frame, FrameError> {
         match get_u8(src)? {
             b'+' => {
-                // Read the line and convert it to `Vec<u8>`
                 let line = get_line(src)?.to_vec();
-
-                // Convert the line to a String
                 let string = String::from_utf8(line)?;
-
                 Ok(Frame::Simple(string))
             }
             b'-' => {
-                // Read the line and convert it to `Vec<u8>`
                 let line = get_line(src)?.to_vec();
-
-                // Convert the line to a String
                 let string = String::from_utf8(line)?;
-
                 Ok(Frame::Error(string))
             }
             b':' => {
@@ -169,19 +156,13 @@ impl Frame {
 
                     Ok(Frame::Null)
                 } else {
-                    // Read the bulk string
                     let len = get_decimal(src)?.try_into()?;
                     let n = len + 2;
-
                     if src.remaining() < n {
-                        return Err(Error::Incomplete);
+                        return Err(FrameError::Incomplete);
                     }
-
                     let data = Bytes::copy_from_slice(&src.chunk()[..len]);
-
-                    // skip that number of bytes + 2 (\r\n).
-                    skip(src, n)?;
-
+                    skip(src, n)?; // skip that number of bytes + 2 (\r\n).
                     Ok(Frame::Bulk(data))
                 }
             }
@@ -199,7 +180,6 @@ impl Frame {
         }
     }
 
-    /// Converts the frame to an "unexpected frame" error
     pub fn to_error(&self) -> crate::Error {
         format!("unexpected frame: {}", self).into()
     }
@@ -248,32 +228,31 @@ impl fmt::Display for Frame {
                         part.fmt(fmt)?;
                     }
                 }
-
                 Ok(())
             }
         }
     }
 }
 
-fn peek_u8(src: &mut Cursor<&[u8]>) -> Result<u8, Error> {
+fn peek_u8(src: &mut Cursor<&[u8]>) -> Result<u8, FrameError> {
     if !src.has_remaining() {
-        return Err(Error::Incomplete);
+        return Err(FrameError::Incomplete);
     }
 
     Ok(src.chunk()[0])
 }
 
-fn get_u8(src: &mut Cursor<&[u8]>) -> Result<u8, Error> {
+fn get_u8(src: &mut Cursor<&[u8]>) -> Result<u8, FrameError> {
     if !src.has_remaining() {
-        return Err(Error::Incomplete);
+        return Err(FrameError::Incomplete);
     }
 
     Ok(src.get_u8())
 }
 
-fn skip(src: &mut Cursor<&[u8]>, n: usize) -> Result<(), Error> {
+fn skip(src: &mut Cursor<&[u8]>, n: usize) -> Result<(), FrameError> {
     if src.remaining() < n {
-        return Err(Error::Incomplete);
+        return Err(FrameError::Incomplete);
     }
 
     src.advance(n);
@@ -281,7 +260,7 @@ fn skip(src: &mut Cursor<&[u8]>, n: usize) -> Result<(), Error> {
 }
 
 /// Read a new-line terminated decimal
-fn get_decimal(src: &mut Cursor<&[u8]>) -> Result<u64, Error> {
+fn get_decimal(src: &mut Cursor<&[u8]>) -> Result<u64, FrameError> {
     use atoi::atoi;
 
     let line = get_line(src)?;
@@ -290,7 +269,7 @@ fn get_decimal(src: &mut Cursor<&[u8]>) -> Result<u64, Error> {
 }
 
 /// Find a line
-fn get_line<'a>(src: &mut Cursor<&'a [u8]>) -> Result<&'a [u8], Error> {
+fn get_line<'a>(src: &mut Cursor<&'a [u8]>) -> Result<&'a [u8], FrameError> {
     // Scan the bytes directly
     let start = src.position() as usize;
     // Scan to the second to last byte
@@ -306,48 +285,37 @@ fn get_line<'a>(src: &mut Cursor<&'a [u8]>) -> Result<&'a [u8], Error> {
         }
     }
 
-    Err(Error::Incomplete)
-}
-
-impl From<String> for Error {
-    fn from(src: String) -> Error {
-        Error::Other(src.into())
-    }
-}
-
-impl From<&str> for Error {
-    fn from(src: &str) -> Error {
-        src.to_string().into()
-    }
-}
-
-impl From<FromUtf8Error> for Error {
-    fn from(_src: FromUtf8Error) -> Error {
-        "protocol error; invalid frame format".into()
-    }
-}
-
-impl From<TryFromIntError> for Error {
-    fn from(_src: TryFromIntError) -> Error {
-        "protocol error; invalid frame format".into()
-    }
-}
-
-impl std::error::Error for Error {}
-
-impl fmt::Display for Error {
-    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
-        match self {
-            Error::Incomplete => "stream ended early".fmt(fmt),
-            Error::Other(err) => err.fmt(fmt),
-        }
-    }
+    Err(FrameError::Incomplete)
 }
 
 #[cfg(test)]
 mod test {
     use super::*;
     use bytes::BytesMut;
+
+    struct CommonFrames {
+        pub frames_and_expected_bytes: Vec<(Frame, BytesMut)>,
+    }
+
+    impl Default for CommonFrames {
+        fn default() -> Self {
+            return CommonFrames {
+                frames_and_expected_bytes: vec![
+                    (Frame::Simple("foo".to_string()), BytesMut::from("+foo\r\n")),
+                    (Frame::Error("foo".to_string()), BytesMut::from("-foo\r\n")),
+                    (Frame::Integer(10), BytesMut::from(":10\r\n")),
+                    (Frame::Null, BytesMut::from("$-1\r\n")),
+                    (Frame::Bulk(Bytes::from("foo")), BytesMut::from("$3\r\nfoo\r\n")),
+                ],
+            };
+        }
+    }
+
+    impl CommonFrames {
+        fn frames(&self) -> Vec<Frame> {
+            return self.frames_and_expected_bytes.iter().map(|(f, _)| f.clone()).collect();
+        }
+    }
 
     #[tokio::test]
     async fn test_array() {
@@ -378,24 +346,60 @@ mod test {
 
     #[tokio::test]
     async fn test_create_bytes() {
-        let buffer = Frame::Simple("foo".to_string()).create_bytes().unwrap();
-        let expected = BytesMut::from("+foo\r\n");
-        assert_eq!(buffer, expected);
+        for (frame, expected_bytes) in CommonFrames::default().frames_and_expected_bytes.iter() {
+            let bytes = frame.create_bytes();
+            assert!(bytes.is_ok());
+            assert_eq!(bytes.unwrap(), expected_bytes)
+        }
+    }
 
-        let buffer = Frame::Error("foo".to_string()).create_bytes().unwrap();
-        let expected = BytesMut::from("-foo\r\n");
-        assert_eq!(buffer, expected);
+    #[tokio::test]
+    async fn test_check() {
+        for (frame, _) in CommonFrames::default().frames_and_expected_bytes {
+            let bytes = frame.create_bytes().unwrap();
+            let mut buf = Cursor::new(&bytes[..]);
+            assert!(Frame::check(&mut buf).is_ok())
+        }
 
-        let buffer = Frame::Integer(10).create_bytes().unwrap();
-        let expected = BytesMut::from(":10\r\n");
-        assert_eq!(buffer, expected);
+        // Check for array frame
+        let frames = CommonFrames::default().frames();
+        let mut bytes = BytesMut::from("*");
+        bytes.put(frames.len().to_string().as_bytes());
+        bytes.put(&b"\r\n"[..]);
+        for frame in frames.iter() {
+            bytes.put(frame.create_bytes().unwrap())
+        }
+        let mut buf = Cursor::new(&bytes[..]);
+        assert!(Frame::check(&mut buf).is_ok());
 
-        let buffer = Frame::Null.create_bytes().unwrap();
-        let expected = BytesMut::from("$-1\r\n");
-        assert_eq!(buffer, expected);
+        // Check for array frame err
+        let bytes = BytesMut::from("err");
+        let mut buf = Cursor::new(&bytes[..]);
+        assert!(Frame::check(&mut buf).is_err())
+    }
 
-        let buffer = Frame::Bulk(Bytes::from("foo")).create_bytes().unwrap();
-        let expected = BytesMut::from("$3\r\nfoo\r\n");
-        assert_eq!(buffer, expected);
+    #[tokio::test]
+    async fn test_parse() {
+        for (frame, _) in CommonFrames::default().frames_and_expected_bytes {
+            let bytes = frame.create_bytes().unwrap();
+            let mut buf = Cursor::new(&bytes[..]);
+
+            let parsed_frame = Frame::parse(&mut buf);
+            assert!(parsed_frame.is_ok());
+            assert_eq!(parsed_frame.unwrap(), frame)
+        }
+
+        // Check for array frame
+        let frames = CommonFrames::default().frames();
+        let mut bytes = BytesMut::from("*");
+        bytes.put(frames.len().to_string().as_bytes());
+        bytes.put(&b"\r\n"[..]);
+        for frame in frames.iter() {
+            bytes.put(frame.create_bytes().unwrap())
+        }
+        let mut buf = Cursor::new(&bytes[..]);
+        let parsed_frame = Frame::parse(&mut buf);
+        assert!(parsed_frame.is_ok());
+        assert_eq!(parsed_frame.unwrap(), Frame::Array(frames));
     }
 }

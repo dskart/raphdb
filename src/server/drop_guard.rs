@@ -1,4 +1,4 @@
-use super::key_value_store::KeyValueStore;
+use crate::KeyValueStore;
 
 /// A wrapper around a `Db` instance. This exists to allow orderly cleanup
 /// of the `Db` by signalling the background purge task to shut down when

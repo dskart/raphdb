@@ -41,7 +41,7 @@ struct State {
     /// Hash Index of the keys -> location in the file
     index: HashMap<String, usize>,
 
-    /// True when the MiniRedis instance is shutting down. This happens when all `SimpleSTore`
+    /// True when the  instance is shutting down. This happens when all `SimpleSTore`
     /// values drop. Setting this to `true` signals to the background task to
     /// exit.
     shutdown: bool,
@@ -145,8 +145,8 @@ impl KeyValueStore for SimpleStore {
 
         let len: u64;
         {
-            let mut file = std::fs::OpenOptions::new().append(true).open(LOG_FILE)?;
             let _m = self.shared.write_mutex.lock().unwrap();
+            let mut file = std::fs::OpenOptions::new().append(true).open(LOG_FILE)?;
             len = file.metadata()?.len();
             file.write_all(&buf[..])?;
             file.sync_all()?;

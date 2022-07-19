@@ -1,4 +1,7 @@
-use crate::{Connection, Frame, KeyValueStore, Parse};
+use crate::{
+    connection::{Connection, Frame, Parser},
+    KeyValueStore,
+};
 
 use bytes::Bytes;
 
@@ -12,8 +15,8 @@ impl Get {
         Get { key: key.to_string() }
     }
 
-    pub fn parse_frames(parse: &mut Parse) -> crate::Result<Get> {
-        let key = parse.next_string()?;
+    pub fn parse_frames(parser: &mut Parser) -> crate::Result<Get> {
+        let key = parser.next_string()?;
         Ok(Get { key })
     }
 

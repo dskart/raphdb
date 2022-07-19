@@ -1,4 +1,11 @@
-use crate::frame::{self, Frame};
+pub mod cmd;
+pub use cmd::Command;
+mod error;
+use error::{FrameError, ParserError};
+mod frame;
+pub use frame::Frame;
+mod parser;
+use parser::Parser;
 
 use bytes::{Buf, BytesMut};
 use std::io::{self, Cursor};
@@ -44,7 +51,7 @@ impl Connection {
 
     /// Read a single `Frame` value from the underlying stream.
     ///
-    /// The function waits until it has retrieved enough data to parse a frame.
+    /// The function waits until it has retrieved enough data to parser a frame.
     /// Any data remaining in the read buffer after the frame has been parsed is
     /// kept there for the next call to `read_frame`.
     ///
@@ -55,7 +62,7 @@ impl Connection {
     /// `None`. Otherwise, an error is returned.
     pub async fn read_frame(&mut self) -> crate::Result<Option<Frame>> {
         loop {
-            // Attempt to parse a frame from the buffered data. If enough data
+            // Attempt to parser a frame from the buffered data. If enough data
             // has been buffered, the frame is returned.
             if let Some(frame) = self.parse_frame()? {
                 return Ok(Some(frame));
@@ -80,22 +87,20 @@ impl Connection {
         }
     }
 
-    /// Tries to parse a frame from the buffer. If the buffer contains enough
+    /// Tries to parser a frame from the buffer. If the buffer contains enough
     /// data, the frame is returned and the data removed from the buffer. If not
     /// enough data has been buffered yet, `Ok(None)` is returned. If the
     /// buffered data does not represent a valid frame, `Err` is returned.
     fn parse_frame(&mut self) -> crate::Result<Option<Frame>> {
-        use frame::Error::Incomplete;
-
         // Cursor is used to track the "current" location in the
         // buffer. Cursor also implements `Buf` from the `bytes` crate
         // which provides a number of helpful utilities for working
         // with bytes.
         let mut buf = Cursor::new(&self.buffer[..]);
 
-        // The first step is to check if enough data has been buffered to parse
+        // The first step is to check if enough data has been buffered to parser
         // a single frame. This step is usually much faster than doing a full
-        // parse of the frame, and allows us to skip allocating data structures
+        // parser of the frame, and allows us to skip allocating data structures
         // to hold the frame data unless we know the full frame has been
         // received.
         match Frame::check(&mut buf) {
@@ -107,10 +112,10 @@ impl Connection {
                 let len = buf.position() as usize;
 
                 // Reset the position to zero before passing the cursor to
-                // `Frame::parse`.
+                // `Frame::parser`.
                 buf.set_position(0);
 
-                // Parse the frame from the buffer. This allocates the necessary
+                // Parser the frame from the buffer. This allocates the necessary
                 // structures to represent the frame and returns the frame
                 // value.
                 //
@@ -130,14 +135,14 @@ impl Connection {
                 // Return the parsed frame to the caller.
                 Ok(Some(frame))
             }
-            // There is not enough data present in the read buffer to parse a
+            // There is not enough data present in the read buffer to parser a
             // single frame. We must wait for more data to be received from the
             // socket. Reading from the socket will be done in the statement
             // after this `match`.
             //
             // We do not want to return `Err` from here as this "error" is an
             // expected runtime condition.
-            Err(Incomplete) => Ok(None),
+            Err(FrameError::Incomplete) => Ok(None),
             // An error was encountered while parsing the frame. The connection
             // is now in an invalid state. Returning `Err` from here will result
             // in the connection being closed.

@@ -1,7 +1,11 @@
 mod drop_guard;
 mod handler;
+
 pub mod key_value_store;
 mod listener;
+
+mod shutdown;
+use shutdown::Shutdown;
 
 use clap::{AppSettings, Arg};
 use std::future::Future;
